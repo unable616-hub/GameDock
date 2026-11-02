@@ -4,6 +4,8 @@ Windows 本地游戏启动坞 —— 屏幕底部一条悬浮卡片栏，自动�
 
 A local game launcher dock for Windows: a bottom card bar that auto-collects your PC games. Launch with a double-click or a gamepad.
 
+![GameDock screenshot](assets/screenshot.png)
+
 ## 功能
 
 - **自动扫描聚合**：Steam / Epic / MuMu 模拟器（安卓实例）/ WeGame / 本地 exe，一次扫描全进一条卡片栏

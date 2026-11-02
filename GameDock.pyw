@@ -41,6 +41,24 @@ CUSTOM_FILE = os.path.join(CFG_DIR, "custom.txt")   # 自定义拖拽排序的 g
 SCALE_FILE = os.path.join(CFG_DIR, "scale.txt")   # 卡片缩放百分比 (50~150, 步进5)
 LANG_FILE = os.path.join(CFG_DIR, "lang.txt")     # 右键菜单语言 (zh/en/ja)
 
+# ---------------- 版本 / 更新检查 ----------------
+APP_VERSION = "1.1.0"
+UPDATE_API = "https://api.github.com/repos/unable616-hub/GameDock/releases/latest"
+RELEASE_PAGE = "https://github.com/unable616-hub/GameDock/releases/latest"
+
+
+def _ver_tuple(v):
+    """'v1.2.3' -> (1, 2, 3)；解析失败返回 (0,)。"""
+    try:
+        v = str(v).lower().lstrip("v").strip()
+        parts = []
+        for p in re.split(r"[.\-+_]", v):
+            m = re.match(r"\d+", p)
+            parts.append(int(m.group()) if m else 0)
+        return tuple(parts) if parts else (0,)
+    except Exception:
+        return (0,)
+
 # ---------------- Xbox 手柄 (XInput, ctypes 直连, 零新依赖) ----------------
 class _XINPUT_GAMEPAD(ctypes.Structure):
     _fields_ = [("wButtons", ctypes.c_ushort),
@@ -109,6 +127,12 @@ MENU_STR = {
     "update":  ("更新", "Update", "更新"),
     "u_cover": ("封面资源（联网）", "Covers (online)", "カバー画像（オンライン）"),
     "u_genre": ("游戏类型（联网）", "Genres (online)", "ジャンル（オンライン）"),
+    "chk_upd": ("检查更新（联网）", "Check for Updates (online)", "アップデートを確認（オンライン）"),
+    "upd_new": ("发现新版本 %s！\n下载地址（已复制到剪贴板）：",
+                "New version %s available!\nDownload link (copied to clipboard):",
+                "新しいバージョン %s があります！\nダウンロードリンク（クリップボードにコピー済み）："),
+    "upd_latest": ("已是最新版本（%s）。", "You're up to date (%s).", "最新版です（%s）。"),
+    "upd_fail": ("检查更新失败（网络问题）。", "Update check failed (network).", "アップデート確認に失敗しました（ネットワーク）。"),
     "hidden":  ("已隐藏的游戏 (%d)", "Hidden Games (%d)", "非表示のゲーム (%d)"),
     "none":    ("（空）", "(empty)", "（なし）"),
     "restore": ("全部恢复显示", "Restore All", "すべて表示に戻す"),
@@ -2710,6 +2734,9 @@ class Dock(QWidget):
         ua.triggered.connect(self.update_covers)
         ub = upd.addAction(_t("u_genre"))
         ub.triggered.connect(self.update_genres)
+        upd.addSeparator()
+        uc = upd.addAction(_t("chk_upd"))
+        uc.triggered.connect(self.check_for_update)
 
         # 针对单卡的封面操作: 右键点在哪张卡上才出现 (空白处/托盘右键没有)
         card = getattr(self, "_menu_card", None)
@@ -2766,6 +2793,56 @@ class Dock(QWidget):
                 save_lang(code)
         except Exception:
             log_exc("Dock.set_lang")
+
+    # ---------------- 检查更新 (后台线程 + QTimer 轮询, 同 update_covers 模式) ----------------
+    def check_for_update(self):
+        try:
+            if getattr(self, "_checking_update", False):
+                return
+            self._checking_update = True
+            self._update_result = None
+
+            def _worker():
+                try:
+                    req = urllib.request.Request(
+                        UPDATE_API,
+                        headers={"User-Agent": "GameDock/" + APP_VERSION,
+                                 "Accept": "application/vnd.github+json"})
+                    with urllib.request.urlopen(req, timeout=8) as r:
+                        self._update_result = json.loads(r.read().decode("utf-8"))
+                except Exception:
+                    self._update_result = {}    # 失败也置值, 让轮询收尾
+
+            threading.Thread(target=_worker, daemon=True).start()
+            self._upd_timer = QTimer(self)
+            self._upd_timer.setInterval(300)
+            self._upd_timer.timeout.connect(self._update_poll)
+            self._upd_timer.start()
+        except Exception:
+            log_exc("Dock.check_for_update")
+
+    def _update_poll(self):
+        try:
+            if getattr(self, "_update_result", None) is None:
+                return
+            self._upd_timer.stop()
+            self._checking_update = False
+            data = self._update_result
+            latest = str(data.get("tag_name", "")).strip()
+            if not latest:
+                _info(_t("upd_fail"))
+                return
+            if _ver_tuple(latest) > _ver_tuple(APP_VERSION):
+                url = data.get("html_url") or RELEASE_PAGE
+                try:
+                    QApplication.clipboard().setText(url)   # 链接顺手进剪贴板
+                except Exception:
+                    pass
+                _info(_t("upd_new", latest) + "\n" + url)
+            else:
+                _info(_t("upd_latest", APP_VERSION))
+        except Exception:
+            log_exc("Dock._update_poll")
 
     def _on_menu_scale(self):
         try:
